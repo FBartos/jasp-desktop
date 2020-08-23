@@ -54,9 +54,9 @@ using namespace std;
 AnalysisForm::AnalysisForm(QQuickItem *parent) : QQuickItem(parent)
 {
 	setObjectName("AnalysisForm");
-	connect(this, &AnalysisForm::infoChanged,	this, &AnalysisForm::helpMDChanged			);
-	connect(this, &AnalysisForm::formCompleted, this, &AnalysisForm::formCompletedHandler   );
 
+	connect(this, &AnalysisForm::formCompleted, this, &AnalysisForm::formCompletedHandler	);
+	connect(this, &AnalysisForm::infoChanged,	this, &AnalysisForm::helpMDChanged			);
 }
 
 QVariant AnalysisForm::requestInfo(const Term &term, VariableInfo::InfoType info) const
@@ -211,23 +211,18 @@ void AnalysisForm::addControl(JASPControlBase *control)
 {
 	if (control->isBound())
 	{
-		const QString & name = control->name();
-
+		const QString& name = control->name();
 		if (name.isEmpty())
 		{
-			QString label = control->humanFriendlyLabel();
+			QString label = control->property("label").toString();
+			if (label.isEmpty())
+				label = control->property("title").toString();
 
-			if (!label.isEmpty())	addFormError(tr("Control with label '%1' has no name").arg(label));
-			else					addFormError(tr("A control has no name"));
-
-			control->setHasError(true);
+			if (label.isEmpty())	_formErrorMessages.append(tr("Control with label '%1' has no name").arg(label));
+			else					_formErrorMessages.append(tr("A control has no name"));
 		}
 		else if (_controls.keys().contains(name))
-		{
-			addFormError(tr("2 controls have the same name: %1").arg(name));
-			control					->	setHasWarning(true);
-			_controls[name]->item()	->	setHasWarning(true);
-		}
+			_formErrorMessages.append(tr("2 controls have the same name: %1").arg(name));
 		else
 		{
 			JASPControlWrapper* wrapper = control->getWrapper();
@@ -247,6 +242,11 @@ void AnalysisForm::_setUpControls()
 	_orderExpanders();
 	_setUpRelatedModels();
 	_setUpItems();
+
+	if (!_formErrorMessagesItem)
+		Log::log()  << "No errorMessages Item found!" << std::endl;
+
+	_setErrorMessages();
 }
 
 void AnalysisForm::_setUpRelatedModels()
@@ -262,13 +262,13 @@ void AnalysisForm::_setUpRelatedModels()
 			//ListModel* targetModel = _modelMap[dropKey]; //Indexing on a map creates elements if they do not exist yet...
 
 			if (_modelMap.count(dropKey))		_relatedModelMap[listView] = _modelMap[dropKey];
-			else								addFormError(tr("Cannot find a source %1 for VariableList %2").arg(dropKey).arg(listView->name()));
+			else								_formErrorMessages.append(tr("Cannot find a source %1 for VariableList %2").arg(dropKey).arg(listView->name()));
 		}
 		else
 		{
 			bool draggable = listView->getItemProperty("draggabble").toBool();
 			if (draggable)
-				addFormError(tr("No drop key found for %1").arg(listView->name()));
+				_formErrorMessages.append(tr("No drop key found for %1").arg(listView->name()));
 		}
 
 	}
@@ -325,8 +325,8 @@ void AnalysisForm::_orderExpanders()
 		{
 			if (sibling->objectName() == "Section")
 			{
-				QObject			* button	= sibling->property("button").value<QObject*>();
-				JASPControlBase	* control	= qobject_cast<JASPControlBase*>(button);
+				QObject* button = sibling->property("button").value<QObject*>();
+				JASPControlBase* control = qobject_cast<JASPControlBase*>(button);
 				if (control && control->controlType() == JASPControlBase::ControlType::Expander)
 				{
 					if (foundExpander)
@@ -363,18 +363,31 @@ void AnalysisForm::exportResults()
     _analysis->exportResults();
 }
 
-QString AnalysisForm::msgsListToString(const QStringList & list) const
+void AnalysisForm::_setErrorMessages()
 {
-	if(list.length() == 0) return "";
-
-	QString text = "<ul style=\"margin-bottom:0px\">";
-
-	for (const QString& errorMessage : list)
-		text.append("<li>").append(errorMessage).append("</li>");
-
-	text.append("</ul>");
-
-	return text;
+	if (_formErrorMessagesItem)
+	{
+		if (!_formErrorMessages.isEmpty())
+		{
+			QString text;
+			if (_formErrorMessages.length() == 1)
+				text = _formErrorMessages[0];
+			else
+			{
+				text.append("<ul style=\"margin-bottom:0px\">");
+				for (const QString& errorMessage : _formErrorMessages)
+					text.append("<li>").append(errorMessage).append("</li>");
+				text.append("</ul>");
+			}
+			QQmlProperty(_formErrorMessagesItem, "text").write(QVariant::fromValue(text));
+			_formErrorMessagesItem->setVisible(true);
+		}
+		else
+		{
+			QQmlProperty(_formErrorMessagesItem, "text").write(QVariant::fromValue(QString()));
+			_formErrorMessagesItem->setVisible(false);
+		}
+	}
 }
 
 void AnalysisForm::replaceVariableNameInListModels(const std::string & oldName, const std::string & newName)
@@ -433,26 +446,40 @@ void AnalysisForm::_setAllAvailableVariablesModel(bool refreshAssigned)
 
 }
 
-QString AnalysisForm::_getControlLabel(QString controlName)
+QString AnalysisForm::_getControlLabel(JASPControlBase* control)
 {
-	return _controls[controlName]->item()->humanFriendlyLabel();
+	QString label = control->property("label").toString();
+
+	if (label.isEmpty())
+		label = control->property("title").toString();
+
+	if (label.isEmpty())
+		label = control->name();
+
+	label = label.simplified();
+	if (label.right(1) == ":")
+		label = label.chopped(1);
+
+	return label;
 }
 
-void AnalysisForm::_addLoadingError(QStringList wrongJson)
+void AnalysisForm::_addLoadingError()
 {
-	if (wrongJson.size() > 0)
+	if (_jaspControlsWithWarningSet.size() > 0)
 	{
 		QString errorMsg;
-		if (wrongJson.size() == 1)
+		if (_jaspControlsWithWarningSet.size() == 1)
 		{
-			errorMsg = tr("Component %1 was loaded with the wrong type of value and has been reset to its default value.").arg(_getControlLabel(wrongJson[0]));
+			JASPControlBase* control = _jaspControlsWithWarningSet.values()[0];
+			errorMsg = tr("Component %1 was loaded with the wrong type of value and has been reset to its default value.").arg(control->name());
 			errorMsg += "<br>";
 		}
-		else if (wrongJson.size() < 4)
+		else if (_jaspControlsWithWarningSet.size() < 4)
 		{
 			QString names = "<ul>";
-			for(const QString & controlName : wrongJson)
-				names += "<li>" + _getControlLabel(controlName) + "</li>";
+			QSetIterator<JASPControlBase *> it(_jaspControlsWithWarningSet);
+			while (it.hasNext())
+				names += "<li>" + _getControlLabel(it.next()) + "</li>";
 			names += "</ul>";
 
 			errorMsg = tr("These components were loaded with the wrong type of value and have been reset to their default values:%1").arg(names);
@@ -482,8 +509,6 @@ void AnalysisForm::bindTo()
 	_options->blockSignals(true);
 	
 	_setAllAvailableVariablesModel();	
-
-	std::set<std::string> controlsJsonWrong;
 	
 	for (JASPControlWrapper* control : _dependsOrderedCtrls)
 	{
@@ -497,7 +522,6 @@ void AnalysisForm::bindTo()
 			{
 				option = nullptr;
 				boundControl->item()->setHasWarning(true);
-				controlsJsonWrong.insert(name);
 			}
 
 			if (!option && optionsFromJASPFile != Json::nullValue)
@@ -506,10 +530,7 @@ void AnalysisForm::bindTo()
 				if (optionValue != Json::nullValue)
 				{
 					if (!boundControl->isJsonValid(optionValue))
-					{
 						boundControl->item()->setHasWarning(true);
-						controlsJsonWrong.insert(name);
-					}
 					else
 					{
 						// call createOption after checking Json options in isJsonValid: if Json comes from an older version of JASP, createOption can take care of backward compatibility issues.
@@ -555,7 +576,7 @@ void AnalysisForm::bindTo()
 	for (ListModelAvailableInterface* availableModel : availableModelsToBeReset)
 		availableModel->resetTermsFromSourceModels(true);
 	
-	_addLoadingError(tql(controlsJsonWrong));
+	_addLoadingError();
 
 	_options->blockSignals(false, false);
 
@@ -593,11 +614,12 @@ void AnalysisForm::unbind()
 
 void AnalysisForm::addFormError(const QString &error)
 {
-	_formErrors.append(error);
-	emit errorsChanged();
+	_formErrorMessages.append(error);
+	_lastAddedErrorTimestamp = Utils::currentSeconds();
+	_setErrorMessages();
 }
 
-QQuickItem* AnalysisForm::_getControlErrorMessageOfControl(JASPControlBase* jaspControl)
+QQuickItem* AnalysisForm::_getControlErrorMessageUsingThisJaspControl(JASPControlBase* jaspControl)
 {
 	QQuickItem* result = nullptr;
 
@@ -611,8 +633,6 @@ QQuickItem* AnalysisForm::_getControlErrorMessageOfControl(JASPControlBase* jasp
 	return result;
 }
 
-//This should be moved to JASPControlBase maybe?
-//Maybe even to full QML? Why don't we just use a loader...
 void AnalysisForm::addControlError(JASPControlBase* control, QString message, bool temporary, bool warning)
 {
 	if (!control) return;
@@ -662,17 +682,26 @@ void AnalysisForm::addControlError(JASPControlBase* control, QString message, bo
 		QMetaObject::invokeMethod(controlErrorMessageItem, "showMessage", Qt::QueuedConnection, Q_ARG(QVariant, message), Q_ARG(QVariant, temporary));
 	}
 
-	if (warning)	control->setHasWarning(true);
-	else			control->setHasError(true);
+	if (warning)
+		control->setHasWarning(true);
+	else
+		control->setHasError(true);
 }
 
-bool AnalysisForm::hasError()
+void AnalysisForm::addControlErrorSet(JASPControlBase *control, bool add)
 {
-	for(auto & nameControl : _controls)
-		if(nameControl->item()->hasError())
-			return true;
+	if (!control) return;
 
-	return false;
+	if (add)	_jaspControlsWithErrorSet.insert(control);
+	else		_jaspControlsWithErrorSet.remove(control);
+}
+
+void AnalysisForm::addControlWarningSet(JASPControlBase *control, bool add)
+{
+	if (!control) return;
+
+	if (add)	_jaspControlsWithWarningSet.insert(control);
+	else		_jaspControlsWithWarningSet.remove(control);
 }
 
 void AnalysisForm::clearControlError(JASPControlBase* control)
@@ -692,55 +721,49 @@ void AnalysisForm::clearControlError(JASPControlBase* control)
 
 void AnalysisForm::clearFormErrors()
 {
-	_formErrors.clear();
-	emit errorsChanged();
+	if (Utils::currentSeconds() - _lastAddedErrorTimestamp > 5)
+	{
+		_formErrorMessages.clear();
+		_setErrorMessages();
+
+		// Remove also warning without text
+		QSet<JASPControlBase*> controlsWithWarning = _jaspControlsWithWarningSet; // Copy the set: the setHasWarning method changes it.
+
+		for (JASPControlBase* control : controlsWithWarning)
+		{
+			if (!_getControlErrorMessageUsingThisJaspControl(control))
+				control->setHasWarning(false);
+		}
+	}
 }
 
-
-void AnalysisForm::clearFormWarnings()
+void AnalysisForm::formCompletedHandler()
 {
-	_formWarnings.clear();
-	emit warningsChanged();
+	QTimer::singleShot(0, this, &AnalysisForm::_formCompletedHandler);
 }
 
-void AnalysisForm::setAnalysis(QVariant analysis)
-{
-	Analysis * analysisPointer = qobject_cast<Analysis *>(analysis.value<QObject *>());
-
-	if(_analysis == analysisPointer) return;
-
-	if(_analysis && analysisPointer)
-		throw std::runtime_error("An analysis of an analysisform was replaced by another analysis, this is decidedly NOT supported!");
-
-	_analysis = analysisPointer;
-
-	setAnalysisUp();
-}
-
-
-void AnalysisForm::formCompletedHandler()  { QTimer::singleShot(0, this, &AnalysisForm::_formCompletedHandler); }
 void AnalysisForm::_formCompletedHandler()
 {
-	_formCompleted = true;
-	setAnalysisUp();
-}
+	QVariant analysisVariant = QQmlProperty(this, "analysis").read();
+	if (!analysisVariant.isNull())
+	{
+		_analysis	= qobject_cast<Analysis *>(analysisVariant.value<QObject *>());
 
-void AnalysisForm::setAnalysisUp()
-{
-	if(!_formCompleted || !_analysis)
-		return;
+		QQmlContext* context = qmlContext(this);
+		context->setContextProperty("form", this);
 
-	connect(_analysis, &Analysis::hasVolatileNotesChanged,	this, &AnalysisForm::hasVolatileNotesChanged);
-	connect(_analysis, &Analysis::needsRefreshChanged,		this, &AnalysisForm::needsRefreshChanged	);
+		connect(_analysis, &Analysis::hasVolatileNotesChanged,	this, &AnalysisForm::hasVolatileNotesChanged);
+		connect(_analysis, &Analysis::needsRefreshChanged,		this, &AnalysisForm::needsRefreshChanged	);
 
-	_setUpControls();
+		_setUpControls();
 
-	bool isNewAnalysis = _analysis->options()->size() == 0 && _analysis->optionsFromJASPFile().size() == 0;
+		bool isNewAnalysis = _analysis->options()->size() == 0 && _analysis->optionsFromJASPFile().size() == 0;
 
-	bindTo();
+		bindTo();
 
-	_analysis->resetOptionsFromJASPFile();
-	_analysis->initialized(this, isNewAnalysis);
+		_analysis->resetOptionsFromJASPFile();
+		_analysis->initialized(this, isNewAnalysis);
+	}
 }
 
 void AnalysisForm::dataSetChangedHandler()

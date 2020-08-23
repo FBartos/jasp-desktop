@@ -167,6 +167,9 @@ void Analysis::setResults(const Json::Value & results, Status status, const Json
 
 	setStatus(status);
 
+	if (_analysisForm)
+		_analysisForm->clearFormErrors();
+
 	emit resultsChangedSignal(this);
 
 	processResultsForDependenciesToBeShown();

@@ -26,6 +26,7 @@ class JASPControlBase : public QQuickItem
 	Q_PROPERTY( bool								hasWarning			READ hasWarning			WRITE setHasWarning			NOTIFY hasWarningChanged			)
 	Q_PROPERTY( bool								runOnChange			READ runOnChange		WRITE setRunOnChange		NOTIFY runOnChangeChanged			)
 	Q_PROPERTY( QQuickItem						*	childControlsArea	READ childControlsArea	WRITE setChildControlsArea										)
+	Q_PROPERTY( QQuickItem						*	section				READ section			WRITE setSection												)
 	Q_PROPERTY( QQuickItem						*	parentListView		READ parentListView									NOTIFY parentListViewChanged		)
 	Q_PROPERTY( QQuickItem						*	innerControl		READ innerControl		WRITE setInnerControl		NOTIFY innerControlChanged			)
 	Q_PROPERTY( QQuickItem						*	background			READ background			WRITE setBackground			NOTIFY backgroundChanged			)
@@ -80,20 +81,17 @@ public:
 	bool			isBound()				const	{ return _isBound;				}
 	bool			debug()					const	{ return _debug;				}
 	bool			parentDebug()			const	{ return _parentDebug;			}
-	bool			hasError()				const;
-	bool			hasWarning()			const;
-	bool			childHasError()			const;
-	bool			childHasWarning()		const;
+	bool			hasError()				const	{ return _hasError;				}
+	bool			hasWarning()			const	{ return _hasWarning;			}
 	bool			focusOnTab()			const	{ return activeFocusOnTab();	}
 	AnalysisForm*	form()					const	{ return _form;					}
 	QQuickItem*		childControlsArea()		const	{ return _childControlsArea;	}
 	QQuickItem*		parentListView()		const	{ return _parentListView;		}
 	QString			parentListViewKey()		const	{ return _parentListViewKey;	}
+	QQuickItem*		section()				const	{ return _section;				}
 	QQuickItem*		innerControl()			const	{ return _innerControl;			}
 	QQuickItem*		background()			const	{ return _background;			}
 	bool			runOnChange()			const	{ return _runOnChange;			}
-
-	QString			humanFriendlyLabel()	const;
 
 
 	JASPControlWrapper				*	getWrapper()				const { return _wrapper; }
@@ -110,8 +108,9 @@ public:
 	static QList<JASPControlBase*>	getChildJASPControls(const QQuickItem* item);
 
 public slots:
-	void	setControlType(			ControlType			controlType)		{ _controlType = controlType; }
-	void	setChildControlsArea(	QQuickItem		*	childControlsArea);
+	void	setControlType(			ControlType		controlType)		{ _controlType = controlType; }
+	void	setChildControlsArea(	QQuickItem	*	childControlsArea);
+	void	setSection(				QQuickItem	*	section)			{ _section = section; }
 	void	setFocusOnTab(			bool focus);
 	void	setHasError(			bool hasError);
 	void	setHasWarning(			bool hasWarning);
@@ -183,6 +182,7 @@ protected:
 	JASPControlWrapper	*	_wrapper				= nullptr;
 	QQuickItem			*	_parentListView			= nullptr,
 						*	_childControlsArea		= nullptr,
+						*	_section				= nullptr,
 						*	_innerControl			= nullptr,
 						*	_background				= nullptr;
 	QList<QQmlComponent*>	_rowComponents;
