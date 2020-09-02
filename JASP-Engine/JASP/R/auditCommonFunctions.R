@@ -26,6 +26,8 @@
 
   ### PROCEDURE STAGE ###
   .auditProcedureStage(options, jaspResults)
+  ready <- .auditReadyForNextStage(options, jaspResults, stage = "procedure")
+  if(!ready) return() # Stop if no sampling objective is selected
 
   ### PLANNING STAGE ###
   .auditPlanningStage(options, jaspResults, type, workflow = TRUE)
@@ -103,13 +105,15 @@
 
   if(workflow){
 
+    .fillCriticalTransactions(options, jaspResults)
+
     # Deduct the nessecary values from the input options
     planningOptions <- .auditInputOptions(options, dataset = NULL, jaspResults,
                                           stage = "planning", rawData = TRUE)
 
   } else if(!workflow){
 
-    .auditCreateTableNumber(jaspResults) # Initialize table numbers
+    .auditCreateTableNumber(jaspResults)  # Initialize table numbers
     .auditCreateFigureNumber(jaspResults) # Initialize figure numbers
 
     # Deduct the nessecary values from the input options
@@ -126,6 +130,7 @@
 
   # Check if the options have valid values for running the analysis
   ready <- .auditReadyForAnalysis(options, planningOptions, stage = "planning")
+  if(!(options[['performanceMateriality']] || options[["reduceUncertainty"]])) return() # Stop if no sampling objective is selected
 
   # Create the container that holds the planning output
   planningContainer <- .auditAnalysisContainer(jaspResults, stage = "planning",
@@ -137,7 +142,7 @@
 
   # Get the planning state if it exists, otherwise make one
   planningState <- .auditPlanningState(options, planningOptions, planningContainer, 
-                                       ready, type)
+                                       ready, type, jaspResults)
 
   # Create explanatory text for the planning
   .auditExplanatoryText(options, planningOptions, planningContainer, planningState, 
@@ -256,22 +261,22 @@
   # Create a table containing information about the selection process
   .auditSelectionSummaryTable(options, selectionOptions, planningState,
                               selectionState, selectionContainer, jaspResults,
-                              positionInContainer = 2)
+                              positionInContainer = 2, dataset)
 
   # Create a table containing descriptive statistics of the sample
   .auditSelectionDescriptivesTable(options, selectionState, selectionContainer,
-                                   jaspResults, positionInContainer = 3)
+                                   jaspResults, positionInContainer = 4)
 
   # Create a table displaying the selection
   .auditSelectionSampleTable(options, selectionState, selectionContainer,
-                             jaspResults, positionInContainer = 4)
+                             jaspResults, positionInContainer = 5, selectionOptions)
 
   # --- PLOTS
 
   if(!workflow){
     # Create a collection of plots comparing the population to the sample values
     .auditSelectionHistograms(options, dataset, selectionState, selectionContainer,
-                              jaspResults, positionInContainer = 5)
+                              jaspResults, positionInContainer = 6)
   }
 }
 
@@ -287,8 +292,8 @@
                                           stage = "planning", rawData = TRUE)
     selectionState <- .auditSelectionState(dataset, options, jaspResults[["planningState"]], 
                                            jaspResults[["selectionContainer"]])
-    
-    selectionState <- data.frame(selectionState)
+
+    selectionState                <- data.frame(selectionState)
     dataset                       <- .readDataSetToEnd(columns.as.numeric = options[["recordNumberVariable"]])
     sampleFilter                  <- rep(0, planningOptions[["populationSize"]])
     rowNumber                     <- selectionState[["rowNumber"]]
@@ -304,6 +309,7 @@
 
     jaspResults[["sampleFilter"]]$setScale(sampleFilter)
     jaspResults[["variableName"]]$setScale(auditDataVariable)
+
   }
 }
 
@@ -342,7 +348,7 @@
       
     # Perform the evaluation
     evaluationState <- .auditEvaluationState(options, evaluationOptions, sample,
-                                            evaluationContainer, type)
+                                            evaluationContainer, type, selectionState)
 
     # Create explanatory text for the evaluation
     .auditExplanatoryTextEvaluation(options,
@@ -398,9 +404,14 @@
                                positionInContainer = 2)
 
   if(type == "bayesian"){
+
+    # Create a table containing assumption checks
+    .auditEvaluationAssumptionChecks(options, sample, evaluationContainer,
+                                     jaspResults, positionInContainer = 3)
+
     # Create a table containing information regarding the prior and posterior
     .auditPriorAndPosteriorStatisticsTable(options, evaluationOptions, evaluationState, 
-                                           evaluationContainer, jaspResults, positionInContainer = 3)
+                                           evaluationContainer, jaspResults, positionInContainer = 4)
   }
 
   # --- PLOTS
@@ -409,18 +420,18 @@
     # Create a plot containing the prior and posterior distribution
     .auditEvaluationPriorAndPosterior(options, evaluationOptions, planningState,
                                       evaluationState, evaluationContainer, jaspResults,
-                                      positionInContainer = 4)
+                                      positionInContainer = 5)
   }
 
   # Create a plot containing evaluation information
   .auditEvaluationInformationPlot(options, evaluationOptions, evaluationState,
                                   evaluationContainer, jaspResults, type,
-                                  positionInContainer = 6)
+                                  positionInContainer = 7)
 
   # Create a plot containing the correlation between the book and audit values
   if(options[["variableType"]] == "variableTypeAuditValues")
   .auditCorrelationPlot(options, evaluationOptions, sample, evaluationContainer,
-                        jaspResults, positionInContainer = 8)
+                        jaspResults, positionInContainer = 9)
 }
 
 #####################################
@@ -469,7 +480,7 @@
 
 .auditReadVariableFromOptions <- function(options, varType){
   if(varType == "recordNumber"){
-    # Read in the record ID's
+    # Read in the transaction ID's
     recordNumberVariable <- options[["recordNumberVariable"]]
     if(recordNumberVariable == "")
       recordNumberVariable <- NULL
@@ -621,15 +632,22 @@
                                                yes = paste0(round(inputOptions[["materiality"]] * 100, 2), "%"), 
                                                no = paste(inputOptions[["valuta"]], format(options[["materialityValue"]], 
                                                                   scientific = FALSE)))
-  
-  inputOptions[["expectedErrors"]] <- ifelse(options[["expectedErrors"]] == "expectedRelative", 
-                                             yes = options[["expectedPercentage"]], 
-                                             no = options[["expectedNumber"]] / inputOptions[["populationValue"]])
 
-  inputOptions[["expectedErrorsLabel"]] <- ifelse(options[["expectedErrors"]] == "expectedRelative", 
-                                                  yes = paste0(round(inputOptions[["expectedErrors"]] * 100, 2), "%"), 
-                                                  no = paste(inputOptions[["valuta"]], options[["expectedNumber"]]))
+  inputOptions[["expectedErrors"]] <- ifelse(options[["expectedErrors"]] == "expectedRelative",
+                                              yes = options[["expectedPercentage"]],
+                                              no = options[["expectedNumber"]])
+  if(options[["materiality"]] == "materialityAbsolute" &&
+      options[["expectedErrors"]] == "expectedAbsolute")
+    inputOptions[["expectedErrors"]] <- inputOptions[["expectedErrors"]] / inputOptions[["populationValue"]]
+
+  inputOptions[["expectedErrorsLabel"]] <- ifelse(options[["expectedErrors"]] == "expectedRelative",
+                                                  yes = paste0(round(inputOptions[["expectedErrors"]] * 100, 2), "%"),
+                                                  no = options[["expectedNumber"]])
   
+  if(options[["materiality"]] == "materialityAbsolute" &&
+      options[["expectedErrors"]] == "expectedAbsolute")
+    inputOptions[["expectedErrorsLabel"]] <- paste(inputOptions[["valuta"]], inputOptions[["expectedErrorsLabel"]])
+
   inputOptions[["likelihood"]] <- base::switch(options[["planningModel"]], 
                                                "Poisson" = "poisson", 
                                                "binomial" = "binomial", 
@@ -742,7 +760,12 @@
                                            "recordNumberVariable",
                                            "monetaryVariable",
                                            "valuta",
-                                           "otherValutaName"))
+                                           "otherValutaName",
+                                           "stratificationTopAndBottom",
+                                           "maximumUncertaintyPercentage",
+                                           "reduceUncertainty",
+                                           "performanceMateriality",
+                                           "sampleSizeIncrease"))
 
     jaspResults[["planningContainer"]] <- analysisContainer
 
@@ -761,7 +784,8 @@
                                            "selectionType",
                                            "seed",
                                            "intervalStartingPoint",
-                                           "sampleSize"))
+                                           "sampleSize",
+                                           "stratificationTopAndBottom"))
 
     jaspResults[["selectionContainer"]] <- analysisContainer
 
@@ -884,15 +908,17 @@
         }
         expTMP <- ifelse(options[['expectedErrors']] == "expectedRelative", 
                           yes = options[["expectedPercentage"]], 
-                          no = options[["expectedNumber"]] / analysisOptions[["populationValue"]])
-        if(expTMP >= analysisOptions[["materiality"]]){
+                          no = options[["expectedNumber"]])
+        if(options[["materiality"]] == "materialityAbsolute")
+          expTMP <- expTMP / sum(dataset[, .v(options[["monetaryVariable"]])])
+        if(expTMP >= analysisOptions[["materiality"]] && expTMP < 1 && !options[["reduceUncertainty"]]){
           # Error if the expected errors exceed the performance materiality
           analysisContainer$setError(gettext("Analysis not possible: Your expected errors are higher than materiality."))
           return(TRUE)
         }
         if(.auditCalculateDetectionRisk(options) >= 1){
           # Error if the detection risk of the analysis is higher than one
-          analysisContainer$setError(gettextf("The detection risk is equal to or higher than 100%%. Please re-specify your custom values for the Inherent risk and/or Control risk, or the confidence."))
+          analysisContainer$setError(gettext("The detection risk is equal to or higher than 100%. Please re-specify your custom values for the Inherent risk and/or Control risk, or the confidence."))
           return(TRUE)
         }
       }
@@ -912,9 +938,9 @@
       analysisContainer$setError(gettext("Your sample size must be larger than 1."))
       return(TRUE)
     } else if(options[["recordNumberVariable"]] != "" && !is.null(dataset) && nrow(dataset) != length(unique(dataset[, .v(options[["recordNumberVariable"]])]))){
-      # Error if the record ID's are not unique
+      # Error if the transaction ID's are not unique
       analysisContainer[["errorMessage"]] <- createJaspTable(gettext("Selection summary"))
-      analysisContainer$setError(gettext("Your must specify unique record ID's. The row numbers of the data set are sufficient."))
+      analysisContainer$setError(gettext("Your must specify unique transaction ID's. The row numbers of the data set are sufficient."))
       return(TRUE)
     } else {
       # No error in the selection options
@@ -924,9 +950,9 @@
   } else if(stage == "selection-workflow") {
 
     if(options[["recordNumberVariable"]] != "" && !is.null(dataset) && nrow(dataset) != length(unique(dataset[, .v(options[["recordNumberVariable"]])]))){
-      # Error if the record ID's are not unique
+      # Error if the transaction ID's are not unique
       analysisContainer[["errorMessage"]] <- createJaspTable(gettext("Selection summary"))
-      analysisContainer$setError(gettext("Your must specify unique record ID's. The row numbers of the data set are sufficient."))
+      analysisContainer$setError(gettext("Your must specify unique transaction ID's. The row numbers of the data set are sufficient."))
       return(TRUE)
     } else {
       # No error in the selection options
@@ -964,14 +990,14 @@
       analysisContainer$setError(gettext("The direct, difference, ratio, and regression confidence bound require that you specify the population size and the population value."))
       return(TRUE)
     } else if(!options[["useSumStats"]] && options[["recordNumberVariable"]] != "" && !is.null(dataset) && nrow(dataset) != length(unique(dataset[, .v(options[["recordNumberVariable"]])]))){
-      # Error if the record ID's are not unique
+      # Error if the transaction ID's are not unique
       analysisContainer[["errorMessage"]] <- createJaspTable(gettext("Selection summary"))
-      analysisContainer$setError(gettext("Your must specify unique record ID's. The row numbers of the data set are sufficient."))
+      analysisContainer$setError(gettext("Your must specify unique transaction ID's. The row numbers of the data set are sufficient."))
       return(TRUE)
     } else if(.auditCalculateDetectionRisk(options) >= 1){
       # Error if the detection risk of the analysis is higher than one
       analysisContainer[["errorMessage"]] <- createJaspTable(gettext("Evaluation summary"))
-      analysisContainer$setError(gettextf("The detection risk is equal to or higher than 100%%. Please re-specify your values for the Inherent risk and/or Control risk, or the confidence."))
+      analysisContainer$setError(gettext("The detection risk is equal to or higher than 100%. Please re-specify your values for the Inherent risk and/or Control risk, or the confidence."))
       return(TRUE)
     } else {
       # No error in the evaluation options
@@ -981,9 +1007,12 @@
 }
 
 .auditReadyForNextStage <- function(options, jaspResults, stage){
-  if(stage == "planning"){
+  if(stage == "procedure"){
+    # Check whether any of the two sampling objectives is selected
+    ready <- options[["performanceMateriality"]] || options[["reduceUncertainty"]]
+  } else if(stage == "planning"){
     # Check whether the "To selection" button is pressed and no error occurred in the previous stage
-    ready <- options[["samplingChecked"]] && !jaspResults[["planningContainer"]]$getError()
+    ready <- options[["samplingChecked"]] && !jaspResults[["planningContainer"]]$getError() && (options[["performanceMateriality"]] || options[["reduceUncertainty"]])
   } else if(stage == "selection"){
     
   } else if(stage == "execution"){
@@ -998,11 +1027,28 @@
 .auditReadyForAnalysis <- function(options, planningOptions, stage){
 
   if(stage == "planning"){
-    if(options[["materiality"]] == "materialityAbsolute"){
+    if(!(options[["performanceMateriality"]] || options[["reduceUncertainty"]])){
+      ready <- FALSE
+    }
+    if(options[["performanceMateriality"]] && !options[["reduceUncertainty"]] && options[["materiality"]] == "materialityAbsolute"){
       ready <- options[["materialityValue"]] != 0 && planningOptions[["populationSize"]] != 0 && 
-                planningOptions[["populationValue"]] != 0 && planningOptions[["populationValue"]] != 0.01
-    } else {
+                planningOptions[["populationValue"]] != 0 && planningOptions[["populationValue"]] != 0.01 
+    }
+    if(options[["performanceMateriality"]] && !options[["reduceUncertainty"]] && options[["materiality"]] == "materialityRelative"){
       ready <- options[["materialityPercentage"]] != 0 && planningOptions[["populationSize"]] != 0
+    }
+    if(options[["reduceUncertainty"]] && !options[["performanceMateriality"]]){
+      ready <- options[["maximumUncertaintyPercentage"]] != 0 && planningOptions[["populationSize"]] != 0 && 
+                planningOptions[["populationValue"]] != 0
+    }
+    if(options[["reduceUncertainty"]] && options[["performanceMateriality"]]){
+      if(options[["materiality"]] == "materialityAbsolute"){
+        ready <- options[["materialityValue"]] != 0 && planningOptions[["populationSize"]] != 0 && 
+                planningOptions[["populationValue"]] != 0 && planningOptions[["populationValue"]] != 0.01 &&
+                options[["maximumUncertaintyPercentage"]] != 0
+      } else {
+        ready <- options[["materialityPercentage"]] != 0 && planningOptions[["populationSize"]] != 0 && options[["maximumUncertaintyPercentage"]] != 0
+      }
     }
   }
 
@@ -1023,10 +1069,25 @@
 
       procedureContainer <- .auditAnalysisContainer(jaspResults, stage = "procedure",
                                                     position = 1)
-      procedureText <- gettextf("The objective of this substantive testing procedure is to determine with a specified confidence <b>(%1$s)</b> whether the %2$s of misstatement in the target population is lower than the specified materiality of <b>%3$s</b>.",
+
+      if(!options[["performanceMateriality"]] && !options[["reduceUncertainty"]]){
+        procedureText <- gettextf("Select one or more sampling objectives from the top left corner to begin the planning stage.\n\n%1$s <b>Test against a performance materiality</b>\n\nEnable this objective if you want to <i>test</i> whether the total misstatement in the population exceeds a certain limit (i.e., the performance materiality) based on a sample.\n\n%2$s <b>Obtain a minimum precision</b>\n\nEnable this objective if you want to obtain a minimum precision when <i>estimating</i> the total misstatement based on a sample.", "\u25CF", "\u25CF")
+      } else if(options[["performanceMateriality"]] && !options[["reduceUncertainty"]]){
+        procedureText <- gettextf("The objective of this audit sampling procedure is to determine with a specified confidence <b>(%1$s)</b> whether the %2$s of misstatement in the target population is lower than the specified performance materiality of <b>%3$s</b>.",
                                 stageOptions[["confidenceLabel"]],
                                 stageOptions[["absRel"]],
                                 stageOptions[["materialityLabel"]])
+      } else if(!options[["performanceMateriality"]] && options[["reduceUncertainty"]]){
+        procedureText <- gettextf("The objective of this audit sampling procedure is to determine the misstatement in the target population with a specified confidence <b>(%1$s)</b> and a minimum precision of <b>%2$s</b>.",
+                                  stageOptions[["confidenceLabel"]],
+                                  paste0(round(options[["maximumUncertaintyPercentage"]] * 100, 2), "%"))
+      } else if(options[["performanceMateriality"]] && options[["reduceUncertainty"]]){
+        procedureText <- gettextf("The objective of this audit sampling procedure is to determine with a specified confidence <b>(%1$s)</b> whether the %2$s of misstatement in the target population is lower than the specified performance materiality of <b>%3$s</b> with a minimum precision of <b>%4$s</b>.",
+                                stageOptions[["confidenceLabel"]],
+                                stageOptions[["absRel"]],
+                                stageOptions[["materialityLabel"]],
+                                paste0(round(options[["maximumUncertaintyPercentage"]] * 100, 2), "%"))
+      }                                           
 
       procedureContainer[["procedureParagraph"]] <- createJaspHtml(procedureText, "p")
       procedureContainer[["procedureParagraph"]]$position <- positionInContainer
@@ -1081,7 +1142,7 @@
       if(!is.null(stageState) && !is.null(stageState[["musFailed"]])){
         # MUS has failed for some reason, fall back to record sampling
 
-        message <- gettextf("From the population of <b>%1$s</b> observations, <b>%2$s</b> observations were selected using a <b>%3$s record sampling</b> method. <br><b>Warning:</b> A monetary unit sampling method was tried but failed.",
+        message <- gettextf("From the population of <b>%1$s</b> observations, <b>%2$s</b> sampling units were selected using a <b>%3$s record sampling</b> method. <br><b>Warning:</b> A monetary unit sampling method was tried but failed.",
                             stageOptions[["populationSize"]],
                             prevState[["sampleSize"]],
                             samplingLabel)
@@ -1092,7 +1153,7 @@
                                       "recordSampling" = gettextf("%1$s record sampling", samplingLabel), 
                                       "musSampling" = gettextf("%1$s monetary unit sampling", samplingLabel))
 
-        message <- gettextf("From the population of <b>%1$s</b> observations, <b>%2$s</b> observations were selected using a <b>%3$s</b> method.",
+        message <- gettextf("From the population of <b>%1$s</b> observations, <b>%2$s</b> sampling units were selected using a <b>%3$s</b> method.",
                             stageOptions[["populationSize"]],
                             prevState[["sampleSize"]],
                             samplingLabel)
@@ -1101,7 +1162,7 @@
 
       if(!is.null(stageState) && sum(stageState[["count"]]) > nrow(stageState)){
 
-        message <- gettextf("%1$s <b>Note:</b> The selected subset (%2$s) is smaller than the planned sample size (%3$s), as observations are selected multiple times due to their high value. These observations (%4$s) are counted multiple times in the evaluation.",
+        message <- gettextf("%1$s <b>Note:</b> The selected subset (%2$s) is smaller than the planned sample size (%3$s), as observations are selected multiple times due to their high value. These observations (%4$s) will be counted multiple times in the evaluation.",
                             message,
                             nrow(stageState),
                             prevState[["sampleSize"]],
@@ -1271,7 +1332,7 @@
             ggplot2::guides(shape = ggplot2::guide_legend(override.aes = list(size = c(4, 3, 2), shape = c(21, 21, 21), 
                                                           fill = c("red", "dodgerblue1", "orange"), stroke = 2, color = "black")), order = 1) 
 
-    p <- JASPgraphs::themeJasp(p, legend.position = "top") + 
+    p <- jaspGraphs::themeJasp(p, legend.position = "top") + 
           ggplot2::theme(legend.text = ggplot2::element_text(margin = ggplot2::margin(l = -10, r = 50)),
                           panel.grid.major.y = ggplot2::element_line(color = "#cbcbcb", size = 0.5))
 
@@ -1292,14 +1353,14 @@
 .auditBarPlot <- function(column, variableName, valuta){
 
   h <- hist(column, plot = FALSE)
-  yBreaks <- JASPgraphs::getPrettyAxisBreaks(c(0, h$counts), min.n = 4)
-  xBreaks <- JASPgraphs::getPrettyAxisBreaks(c(column, h$breaks), min.n = 4)
+  yBreaks <- jaspGraphs::getPrettyAxisBreaks(c(0, h$counts), min.n = 4)
+  xBreaks <- jaspGraphs::getPrettyAxisBreaks(c(column, h$breaks), min.n = 4)
 
   p <- ggplot2::ggplot(data = data.frame(column), mapping = ggplot2::aes(x = column, y = ..count..)) + 
         ggplot2::scale_x_continuous(name = gettextf("Book values (%1$s)", valuta), breaks = xBreaks, limits = range(xBreaks)) +
         ggplot2::scale_y_continuous(name = gettext("Frequency"), breaks = yBreaks, limits = c(0, max(yBreaks))) + 
         ggplot2::geom_histogram(binwidth = (h$breaks[2] - h$breaks[1]), fill = "grey", col = "black", size = .7, center = ((h$breaks[2] - h$breaks[1])/2))
-  p <- JASPgraphs::themeJasp(p, axisTickWidth = .7, bty = list(type = "n", ldwX = .7, lwdY = 1))
+  p <- jaspGraphs::themeJasp(p, axisTickWidth = .7, bty = list(type = "n", ldwX = .7, lwdY = 1))
 
   return(p)
 }
@@ -1330,7 +1391,8 @@
                                      jaspResults, 
                                      position){
 
-  if(!is.null(jaspResults[["ARMcontainer"]])) 
+  if(!is.null(jaspResults[["ARMcontainer"]]) || 
+    (!options[["performanceMateriality"]] && !options[["reduceUncertainty"]])) 
     return()
 
   ARMcontainer <- createJaspContainer(title = gettext("<u>Audit Risk Model</u>"))
@@ -1345,7 +1407,9 @@
                                     "materialityValue", 
                                     "explanatoryText", 
                                     "valuta",
-                                    "otherValutaName"))
+                                    "otherValutaName",
+                                    "performanceMateriality",
+                                    "reduceUncertainty"))
   
   jaspResults[["ARMcontainer"]] <- ARMcontainer
 
@@ -1433,13 +1497,17 @@
                                 planningOptions, 
                                 planningContainer, 
                                 ready, 
-                                type){
+                                type, 
+                                jaspResults){
                                   
   if(!is.null(planningContainer[["planningState"]])){
 
     return(planningContainer[["planningState"]]$object)
 
   } else if(ready && !planningContainer$getError()){
+
+    if(options[["workflow"]])
+      dataset <- .auditReadDataset(options, jaspResults, stage = "procedure")
 
   auditRisk <- 1 - options[["confidence"]]
 
@@ -1471,7 +1539,7 @@
   detectionRisk <- auditRisk / inherentRisk / controlRisk
 
   if(detectionRisk >= 1){
-    planningContainer$setError(gettextf("The detection risk is equal to or higher than 100%%. Please re-specify your custom values for the Inherent risk and/or Control risk."))  
+    planningContainer$setError(gettextf("The detection risk is equal to or higher than 100%. Please re-specify your custom values for the Inherent risk and/or Control risk."))  
     return()
   }
 
@@ -1479,45 +1547,134 @@
 
       adjustedConfidence <- 1 - detectionRisk
 
+      minPrecision <- NULL
+      if(options[["reduceUncertainty"]])
+        minPrecision <- options[["maximumUncertaintyPercentage"]]
+
+      performanceMateriality <- NULL
+      if(options[["performanceMateriality"]])
+        performanceMateriality <- planningOptions[["materiality"]]
+
       result <- try({
-        jfa::planning(materiality = planningOptions[["materiality"]], 
+        jfa::planning(materiality = performanceMateriality, 
                       confidence = adjustedConfidence, 
                       expectedError = planningOptions[["expectedErrors"]], 
+                      minPrecision = minPrecision,
                       likelihood = planningOptions[["likelihood"]], 
-                      N = planningOptions[["populationSize"]])
+                      N = planningOptions[["populationSize"]],
+                      increase = options[["sampleSizeIncrease"]])
                     })
 
     } else if(type == "bayesian"){
 
+      if(options[["reduceUncertainty"]] && 
+          !options[["performanceMateriality"]] && 
+          options[["stratificationTopAndBottom"]]){
+
+        for(n in seq(5, nrow(dataset), by = options[["sampleSizeIncrease"]])){
+          
+            interval <- (planningOptions[["populationValue"]] / n) 
+            topStratum <- subset(dataset, dataset[, .v(options[["monetaryVariable"]])] > interval)
+            bottomStratum <- subset(dataset, dataset[, .v(options[["monetaryVariable"]])] <= interval)
+
+            m_seen <- sum(topStratum[, .v(options[["monetaryVariable"]])]) 
+            set.seed(rnorm(1) + options[["sampleSizeIncrease"]] + planningOptions[["populationValue"]])
+            intervalStartingPoint <- sample(1:(interval - 1), size = 1)
+
+            intervalSelection <- intervalStartingPoint + 0:(n - 1) * interval
+            index <- NULL
+            for(i in 1:n){
+              index <- c(index, which(intervalSelection[i] < cumsum(dataset[, .v(options[["monetaryVariable"]])]))[1])
+            }
+            sample <- dataset[index, ]
+            sample <- unique(sample)
+
+            bottomStratumSample <- sample[which(sample[, .v(options[["monetaryVariable"]])] <= interval), ]
+
+            m_seen <- m_seen + sum(bottomStratumSample[, .v(options[["monetaryVariable"]])])
+            m_seen_percentage <- m_seen / planningOptions[["populationValue"]]
+
+            m_unseen <- planningOptions[["populationValue"]] - m_seen
+
+            if(options[["expectedErrors"]] == "expectedAllPossible"){
+              a <- 1 + 0:n
+              b <- 1 + n - 0:n
+            } else {
+              a <- 1 + 0:ceiling(n * (planningOptions[["expectedErrors"]] * 2))
+              b <- 1 + n - 0:ceiling(n * (planningOptions[["expectedErrors"]] * 2))
+            }
+
+            v95 <- qbeta(options[["confidence"]], a, b)
+            v <- ((a - 1) / (a + b - 2))
+            relativeInaccuracy <- v95 - v
+            correctedInaccuracy <- options[["maximumUncertaintyPercentage"]] * (1 / (1 - m_seen_percentage))
+            diff <- relativeInaccuracy - correctedInaccuracy
+            
+            if(all(diff <= 0)){
+              break
+            }
+          }
+
+          result <- list(sampleSize = n, 
+                          confidence = options[["confidence"]],
+                          materiality = planningOptions[["materiality"]], 
+                          N = planningOptions[["populationSize"]], 
+                          expectedSampleError = 0,
+                          likelihood = "binomial",
+                          prior = list(aPrior = 1, 
+                                      bPrior = 1, 
+                                      nPrior = 0, 
+                                      kPrior = 0),
+                          startingPoint = intervalStartingPoint)
+
+      } else {
+
       result <- try({
 
-        prior <- jfa::auditPrior(materiality = planningOptions[["materiality"]], 
-                                confidence = planningOptions[["confidence"]],
-                                expectedError = planningOptions[["expectedErrors"]], 
-                                likelihood = planningOptions[["likelihood"]], 
-                                N = planningOptions[["populationSize"]], 
-                                ir = inherentRisk, 
-                                cr = controlRisk)
+        if(options[["performanceMateriality"]]){
+          prior <- jfa::auditPrior(materiality = planningOptions[["materiality"]], 
+                                  confidence = planningOptions[["confidence"]],
+                                  expectedError = planningOptions[["expectedErrors"]], 
+                                  likelihood = planningOptions[["likelihood"]], 
+                                  N = planningOptions[["populationSize"]], 
+                                  ir = inherentRisk, 
+                                  cr = controlRisk)
+        } else {
+          prior <- TRUE
+        }
 
-        jfa::planning(materiality = planningOptions[["materiality"]], 
+        minPrecision <- NULL
+        if(options[["reduceUncertainty"]])
+          minPrecision <- options[["maximumUncertaintyPercentage"]]
+
+        performanceMateriality <- NULL
+        if(options[["performanceMateriality"]])
+          performanceMateriality <- planningOptions[["materiality"]]
+
+        jfa::planning(materiality = performanceMateriality, 
                       confidence = planningOptions[["confidence"]], 
                       expectedError = planningOptions[["expectedErrors"]], 
+                      likelihood = planningOptions[["likelihood"]],
                       N = planningOptions[["populationSize"]], 
-                      prior = prior)
+                      prior = prior, 
+                      minPrecision = minPrecision,
+                      increase = options[["sampleSizeIncrease"]])
 
                     })
+
+      }
 
     }
 
     if(isTryError(result)){
 
-      if(JASP:::.extractErrorMessage(result) == "Sample size could not be calculated, please increase the maxSize argument"){
+      if(jaspBase:::.extractErrorMessage(result) == "Sample size could not be calculated, please increase the maxSize argument"){
         planningContainer$setError(gettext("The resulting sample size exceeds 5000."))
         return()
       }
 
       planningContainer$setError(gettextf("An error occurred: %1$s", 
-                                          JASP:::.extractErrorMessage(result)))
+                                          jaspBase:::.extractErrorMessage(result)))
       return()
     }
 
@@ -1578,11 +1735,23 @@
                                     "evaluationChecked",
                                     "planningModel",
                                     "expectedEvidenceRatio",
-                                    "expectedBayesFactor"))
+                                    "expectedBayesFactor",
+                                    "expectedErrors",
+                                    "reduceUncertainty",
+                                    "performanceMateriality",
+                                    "stratificationTopAndBottom",
+                                    "sampleSizeIncrease"))
 
-  summaryTable$addColumnInfo(name = 'materiality',          
-                             title = gettext("Materiality"),          
-                             type = 'string')
+  if(options[["performanceMateriality"]])
+    summaryTable$addColumnInfo(name = 'materiality',          
+                              title = gettext("Materiality"),          
+                              type = 'string')
+
+  if(options[["reduceUncertainty"]])
+    summaryTable$addColumnInfo(name = 'precision',          
+                              title = gettext("Minimum precision"),          
+                              type = 'string')
+
   summaryTable$addColumnInfo(name = 'IR',                   
                              title = gettext("Inherent risk"),        
                              type = 'string')
@@ -1663,12 +1832,35 @@
 
     summaryTable$addFootnote(message)
 
-    row <- data.frame(materiality = planningOptions[["materialityLabel"]], 
+    if(options[["performanceMateriality"]] && !options[["reduceUncertainty"]]){
+          row <- data.frame(materiality = planningOptions[["materialityLabel"]], 
                       IR = paste0(round(inherentRisk * 100, 2), "%"), 
                       CR = paste0(round(controlRisk * 100, 2), "%"), 
                       DR = paste0(round(detectionRisk * 100, 2), "%"), 
                       k = ".", 
                       n = ".")
+    } else if(!options[["performanceMateriality"]] && options[["reduceUncertainty"]]){
+      row <- data.frame(precision = paste0(round(options[["maximumUncertaintyPercentage"]] * 100, 2), "%"), 
+                        IR = paste0(round(inherentRisk * 100, 2), "%"), 
+                        CR = paste0(round(controlRisk * 100, 2), "%"), 
+                        DR = paste0(round(detectionRisk * 100, 2), "%"), 
+                        k = ".", 
+                        n = ".")
+    } else if(options[["performanceMateriality"]] && options[["reduceUncertainty"]]){
+      row <- data.frame(materiality = planningOptions[["materialityLabel"]], 
+                        precision = paste0(round(options[["maximumUncertaintyPercentage"]] * 100, 2), "%"),
+                        IR = paste0(round(inherentRisk * 100, 2), "%"), 
+                        CR = paste0(round(controlRisk * 100, 2), "%"), 
+                        DR = paste0(round(detectionRisk * 100, 2), "%"), 
+                        k = ".", 
+                        n = ".")      
+    } else if(!options[["performanceMateriality"]] && !options[["reduceUncertainty"]]){
+      row <- data.frame(IR = paste0(round(inherentRisk * 100, 2), "%"), 
+                  CR = paste0(round(controlRisk * 100, 2), "%"), 
+                  DR = paste0(round(detectionRisk * 100, 2), "%"), 
+                  k = ".", 
+                  n = ".")    
+    }
 
     if(type == "bayesian" && options[["expectedEvidenceRatio"]])
       row <- cbind(row, expectedEvidenceRatio = ".")
@@ -1727,20 +1919,44 @@
 
   summaryTable$addFootnote(message)
 
-  k <- base::switch(options[["expectedErrors"]], 
-                    "expectedRelative" = planningState[["expectedSampleError"]], 
-                    "expectedAbsolute" = paste(
-                                          planningOptions[["valuta"]], 
-                                          options[["expectedNumber"]]))
-  
   n <- planningState[["sampleSize"]]
 
-  row <- data.frame(materiality = planningOptions[["materialityLabel"]], 
+  k <- base::switch(options[["expectedErrors"]], 
+                    "expectedRelative" = planningState[["expectedSampleError"]], 
+                    "expectedAbsolute" = options[["expectedNumber"]],
+                    "expectedAllPossible" = paste0("0 - ", n))
+  if(options[["performanceMateriality"]] && options[["materiality"]] == "materialityValue")
+    k <- paste(planningOptions[["valuta"]], k)
+
+  if(options[["performanceMateriality"]] && !options[["reduceUncertainty"]]){
+        row <- data.frame(materiality = planningOptions[["materialityLabel"]], 
                     IR = paste0(round(inherentRisk * 100, 2), "%"), 
                     CR = paste0(round(controlRisk * 100, 2), "%"), 
                     DR = paste0(round(detectionRisk * 100, 2), "%"), 
                     k = k, 
                     n = n)
+  } else if(!options[["performanceMateriality"]] && options[["reduceUncertainty"]]){
+    row <- data.frame(precision = paste0(round(options[["maximumUncertaintyPercentage"]] * 100, 2), "%"), 
+                      IR = paste0(round(inherentRisk * 100, 2), "%"), 
+                      CR = paste0(round(controlRisk * 100, 2), "%"), 
+                      DR = paste0(round(detectionRisk * 100, 2), "%"), 
+                      k = k, 
+                      n = n)
+  } else if(options[["performanceMateriality"]] && options[["reduceUncertainty"]]){
+    row <- data.frame(materiality = planningOptions[["materialityLabel"]], 
+                      precision = paste0(round(options[["maximumUncertaintyPercentage"]] * 100, 2), "%"),
+                      IR = paste0(round(inherentRisk * 100, 2), "%"), 
+                      CR = paste0(round(controlRisk * 100, 2), "%"), 
+                      DR = paste0(round(detectionRisk * 100, 2), "%"), 
+                      k = k, 
+                      n = n)      
+  } else if(!options[["performanceMateriality"]] && !options[["reduceUncertainty"]]){
+    row <- data.frame(IR = paste0(round(inherentRisk * 100, 2), "%"), 
+                CR = paste0(round(controlRisk * 100, 2), "%"), 
+                DR = paste0(round(detectionRisk * 100, 2), "%"), 
+                k = k, 
+                n = n)    
+  }
 
   if(type == "bayesian" && 
       (options[["expectedEvidenceRatio"]] || options[["expectedBayesFactor"]])){
@@ -1760,6 +1976,37 @@
   }
 
   summaryTable$addRows(row)
+
+  if(type == "bayesian" && options[["stratificationTopAndBottom"]]){
+    message <- gettextf("The value %1$s is automatically used as a starting point for the fixed interval selection.", planningState[["startingPoint"]])
+    summaryTable$addFootnote(message, symbol = gettextf("%1$s", "\u26A0"))
+  }
+}
+
+.fillCriticalTransactions <- function(options, jaspResults){
+
+  if(options[["recordNumberVariable"]] == "")
+    return()
+
+    dataset <- .auditReadDataset(options, jaspResults, stage = "procedure")
+    
+    if(options[["flagCriticalTransactions"]]){
+
+      criticalTransactions <- rep(0, nrow(dataset))
+
+      if(options[["flagNegativeValues"]])
+        criticalTransactions[which(dataset[, .v(options[["monetaryVariable"]])] < 0)] <- 1
+
+    } else {
+      
+      criticalTransactions          <- rep(NA, nrow(dataset))
+
+    }
+    
+    if(is.null(jaspResults[["criticalTransactions"]]))  
+      jaspResults[["criticalTransactions"]] <- createJaspColumn(columnName = options[["criticalTransactions"]], dependencies = "criticalTransactions")
+
+    jaspResults[["criticalTransactions"]]$setScale(criticalTransactions)
 }
 
 .sampleSizeComparisonPlot <- function(options, 
@@ -1820,33 +2067,47 @@
 
     detectionRisk <- auditRisk / inherentRisk / controlRisk
 
+    minPrecision <- NULL
+    if(options[["reduceUncertainty"]])
+      minPrecision <- options[["maximumUncertaintyPercentage"]]
+
+    performanceMateriality <- NULL
+    if(options[["performanceMateriality"]])
+      performanceMateriality <- planningOptions[["materiality"]]
+
     if(type == "frequentist"){
 
       adjustedConfidence <- 1 - detectionRisk
 
       startProgressbar(3)
 
-      n1 <- jfa::planning(materiality = planningOptions[["materiality"]], 
+      n1 <- jfa::planning(materiality = performanceMateriality, 
                           confidence = adjustedConfidence, 
                           expectedError = planningOptions[["expectedErrors"]], 
                           likelihood = "binomial", 
-                          N = planningOptions[["populationSize"]])
+                          minPrecision = minPrecision,
+                          N = planningOptions[["populationSize"]],
+                          increase = options[["sampleSizeIncrease"]])
 
       progressbarTick() 
 
-      n2 <- jfa::planning(materiality = planningOptions[["materiality"]], 
+      n2 <- jfa::planning(materiality = performanceMateriality, 
                           confidence = adjustedConfidence, 
                           expectedError = planningOptions[["expectedErrors"]], 
-                          likelihood = "poisson", 
-                          N = planningOptions[["populationSize"]])
+                          likelihood = "poisson",
+                          minPrecision = minPrecision, 
+                          N = planningOptions[["populationSize"]],
+                          increase = options[["sampleSizeIncrease"]])
 
       progressbarTick()      
 
-      n3 <- jfa::planning(materiality = planningOptions[["materiality"]], 
+      n3 <- jfa::planning(materiality = performanceMateriality, 
                           confidence = adjustedConfidence, 
                           expectedError = planningOptions[["expectedErrors"]], 
                           likelihood = "hypergeometric", 
-                          N = planningOptions[["populationSize"]])
+                          minPrecision = minPrecision,
+                          N = planningOptions[["populationSize"]],
+                          increase = options[["sampleSizeIncrease"]])
 
       progressbarTick()
       
@@ -1881,7 +2142,8 @@
                           confidence = planningOptions[["confidence"]], 
                           expectedError = planningOptions[["expectedErrors"]], 
                           N = planningOptions[["populationSize"]], 
-                          prior = p1)
+                          prior = p1,
+                          increase = options[["sampleSizeIncrease"]])
       
       progressbarTick()
       
@@ -1897,7 +2159,8 @@
                           confidence = planningOptions[["confidence"]], 
                           expectedError = planningOptions[["expectedErrors"]], 
                           N = planningOptions[["populationSize"]], 
-                          prior = p2)
+                          prior = p2,
+                          increase = options[["sampleSizeIncrease"]])
       
       progressbarTick()
 
@@ -1913,7 +2176,8 @@
                           confidence = planningOptions[["confidence"]], 
                           expectedError = planningOptions[["expectedErrors"]], 
                           N = planningOptions[["populationSize"]], 
-                          prior = p3)
+                          prior = p3,
+                          increase = options[["sampleSizeIncrease"]])
 
       progressbarTick()
 
@@ -1933,7 +2197,7 @@
       d$nature <- factor(x = d$nature, levels = levels(d$nature)[c(1, 2)])
     }
 
-    yBreaks <- JASPgraphs::getPrettyAxisBreaks(0:(ceiling(1.1 * max(n))), min.n = 4)
+    yBreaks <- jaspGraphs::getPrettyAxisBreaks(0:(ceiling(1.1 * max(n))), min.n = 4)
     yLimits <- c(0, ceiling(1.2 * max(n)))
 
     myTheme <- ggplot2::theme(axis.ticks.x = ggplot2::element_blank(), 
@@ -1970,7 +2234,7 @@
       ggplot2::scale_fill_manual(values=c("#7FE58B", "#FF6666"), 
                                  guide = ggplot2::guide_legend(reverse = TRUE))
 
-    p <- JASPgraphs::themeJasp(p, 
+    p <- jaspGraphs::themeJasp(p, 
                               sides = "", 
                               legend.position = "top") + myTheme
 
@@ -2078,8 +2342,8 @@
     dataLegend$type <- factor(x = dataLegend[["type"]], 
                               levels = levels(dataLegend[["type"]])[c(2,1)])
 
-    xTicks <- JASPgraphs::getPrettyAxisBreaks(c(0, xVals))
-    yTicks <- JASPgraphs::getPrettyAxisBreaks(c(0, dataErrorFree[["y"]]))
+    xTicks <- jaspGraphs::getPrettyAxisBreaks(c(0, xVals))
+    yTicks <- jaspGraphs::getPrettyAxisBreaks(c(0, dataErrorFree[["y"]]))
 
     myLegend <- ggplot2::guide_legend(override.aes=list(size = 12, 
                                                        shape = 22, 
@@ -2122,7 +2386,7 @@
           ggplot2::labs(fill = "") +
           ggplot2::guides(fill = myLegend)
     
-    p <- JASPgraphs::themeJasp(p, legend.position = "top") + myTheme
+    p <- jaspGraphs::themeJasp(p, legend.position = "top") + myTheme
 
     samplingDistribution$plotObject <- p
 
@@ -2241,7 +2505,7 @@
       if(isTryError(result)){
 
         selectionContainer$setError(gettextf("An error occurred: %1$s", 
-                                             JASP:::.extractErrorMessage(result)))
+                                             jaspBase:::.extractErrorMessage(result)))
         return()
 
       } else {
@@ -2292,8 +2556,7 @@
 
   if(units == "records" && algorithm == "interval"){
 
-    interval <- ceiling(nrow(dataset) / 
-                        planningState[["sampleSize"]])
+    interval <- (nrow(dataset) / planningState[["sampleSize"]])
     if(options[["seed"]] > interval){
       selectionContainer$setError(gettext("Your specified starting point lies outside the selection interval."))
       return()
@@ -2301,13 +2564,17 @@
 
   } else if (units == "mus" && algorithm == "interval"){
 
-    interval <- ceiling(sum(dataset[, bookValues]) / 
-                        planningState[["sampleSize"]])
+    interval <- (sum(dataset[, bookValues]) / planningState[["sampleSize"]])
     if(options[["seed"]] > interval){
       selectionContainer$setError("Your specified starting point lies outside the selection interval.")
       return()
     }
 
+  }
+
+  startingPointSeed <- options[["seed"]]
+  if(!is.null(planningState[["startingPoint"]])){
+    startingPointSeed <- planningState[["startingPoint"]]
   }
 
   sample <- jfa::sampling(population = dataset, 
@@ -2317,7 +2584,7 @@
                           seed = options[["seed"]],
                           ordered = FALSE,
                           bookValues = bookValues,
-                          intervalStartingPoint = options[["seed"]])                                
+                          intervalStartingPoint = startingPointSeed)                                
 
   sample <- data.frame(sample[["sample"]])
   sample[, 1:2] <- apply(X = sample[, 1:2], MARGIN = 2, as.numeric)
@@ -2331,7 +2598,8 @@
                                         selectionState,
                                         selectionContainer,
                                         jaspResults, 
-                                        positionInContainer){
+                                        positionInContainer,
+                                        dataset){
 
   .updateTabNumber(jaspResults)
 
@@ -2373,13 +2641,15 @@
     selectionInformationTable$addColumnInfo(name = "interval", 
                                             title ="Interval", 
                                             type = "string")
-
+  
   if(options[["selectionMethod"]] != "systematicSampling"){
-    message <- gettextf("The sample is drawn with <i>seed %1$s</i>.",
-                        options[["seed"]])
+    message <- gettextf("The sample is drawn with <i>seed %1$s</i>.", options[["seed"]])
   } else {
-    message <- gettextf("Unit %1$s is selected from each interval.",
-                        options[["seed"]])
+    startingPointSeed <- options[["seed"]]
+    if(!is.null(planningState[["startingPoint"]])){
+      startingPointSeed <- planningState[["startingPoint"]]
+    }
+    message <- gettextf("Unit %1$s is selected from each interval.", startingPointSeed)
   }
 
   selectionInformationTable$addFootnote(message)
@@ -2392,21 +2662,16 @@
   if(options[["selectionType"]] == "recordSampling" || 
       !is.null(selectionState[["musFailed"]])){
 
-    interval <- ceiling(planningOptions[["populationSize"]] / 
-                        planningState[["sampleSize"]])
-
+    interval <- (planningOptions[["populationSize"]] / planningState[["sampleSize"]])
   } else {
-
-    interval <- ceiling(planningOptions[["populationValue"]] / 
-                        planningState[["sampleSize"]])
-
+    interval <- (planningOptions[["populationValue"]] / planningState[["sampleSize"]])
   }
 
   sampleSize <- sum(selectionState[["count"]])
 
   if(options[["materiality"]] == "materialityAbsolute"){
 
-    value <- ceiling(sum(abs(selectionState[, .v(options[["monetaryVariable"]])])))
+    value <- round(sum(abs(selectionState[, .v(options[["monetaryVariable"]])])), 2)
     percentage <- paste0(round(value / planningOptions[["populationValue"]] * 100, 2), "%")
 
     row  <- data.frame("size" = sampleSize, 
@@ -2416,33 +2681,89 @@
   } else {
 
     percentage <- paste0(round(sampleSize / planningOptions[["populationSize"]] * 100, 2), "%")
-
-    row <- data.frame("size" = sampleSize, 
-                      "percentage" = percentage)
+    row <- data.frame("size" = sampleSize, "percentage" = percentage)
   
   }
 
   if(options[["selectionMethod"]] != "randomSampling"){
-
-    if(options[["selectionType"]] == "musSampling" && 
-        is.null(selectionState[["musFailed"]])){
-
-      row <- cbind(row, 
-                   interval = paste(planningOptions[["valuta"]], interval))
+    if(options[["selectionType"]] == "musSampling" && is.null(selectionState[["musFailed"]])){
+      row <- cbind(row, interval = paste(planningOptions[["valuta"]], round(interval, 2)))
     } else {
-      row <- cbind(row, 
-                  interval = interval)
+      row <- cbind(row, interval = round(interval, 2))
     }
   }
 
   selectionInformationTable$addRows(row)
+
+  if(options[["selectionMethod"]] == "systematicSampling"){
+
+    .updateTabNumber(jaspResults)
+
+    if(!is.null(selectionContainer[["stratumTable"]])) 
+      return()
+
+    tableTitle <- gettextf("<b>Table %1$i.</b> Stratification Summary", 
+                          jaspResults[["tabNumber"]]$object)
+    
+    stratumTable <- createJaspTable(tableTitle)
+    stratumTable$position <- positionInContainer + 1
+    stratumTable$dependOn(options = c("bookValueDescriptives",
+                                      "sampleDescriptives",
+                                      "displaySample",
+                                      "samplingChecked",
+                                      "evaluationChecked"))
+    
+    stratumTable$addColumnInfo(name = "stratum", 
+                              title = "", 
+                              type = "string")   
+    stratumTable$addColumnInfo(name = "size", 
+                              title = gettext("Size"), 
+                              type = "integer")  
+    stratumTable$addColumnInfo(name = "value", 
+                              title = gettext("Value"), 
+                              type = "string")    
+    stratumTable$addColumnInfo(name = "unitSize", 
+                          title = gettext("Selected units"), 
+                          type = "integer")                            
+    stratumTable$addColumnInfo(name = "samplesize", 
+                              title = gettext("Selected transactions"), 
+                              type = "integer") 
+    stratumTable$addColumnInfo(name = "samplevalue", 
+                              title = gettext("Sample value"), 
+                              type = "string")  
+    stratumTable$addColumnInfo(name = "stratumpercentage", 
+                              title = gettext("% of value selected"), 
+                              type = "string")                               
+    selectionContainer[["stratumTable"]] <- stratumTable
+
+    interval <- round(planningOptions[["populationValue"]] / 
+                        planningState[["sampleSize"]], 2)
+
+    topStratum <- dataset[which(dataset[, .v(options[["monetaryVariable"]])] > interval), ]
+    bottomStratum <- dataset[which(dataset[, .v(options[["monetaryVariable"]])] <= interval), ]
+    bottomStratumSample <- selectionState[which(selectionState[, .v(options[["monetaryVariable"]])] <= interval), ]
+
+    topStratumValue <- round(sum(topStratum[, .v(options[["monetaryVariable"]])]), 2)
+    bottomStratumValuePopulation <- round(sum(bottomStratum[, .v(options[["monetaryVariable"]])]), 2)
+    bottomStratumValueSample <- round(sum(bottomStratumSample[, .v(options[["monetaryVariable"]])]), 2)
+
+    row <- data.frame(stratum = c("Top stratum", "Bottom stratum", "Population"), 
+                size = c(nrow(topStratum), nrow(dataset) - nrow(topStratum), nrow(dataset)), 
+                unitSize = c(sampleSize - nrow(bottomStratumSample), nrow(bottomStratumSample), sampleSize),
+                samplesize = c(nrow(topStratum), nrow(bottomStratumSample), nrow(topStratum) + nrow(bottomStratumSample)), 
+                value = c(paste(planningOptions[["valuta"]], topStratumValue), paste(planningOptions[["valuta"]], bottomStratumValueSample), paste(planningOptions[["valuta"]], round(planningOptions[["populationValue"]], 2))),
+                samplevalue = c(paste(planningOptions[["valuta"]], topStratumValue), paste(planningOptions[["valuta"]], bottomStratumValueSample), paste(planningOptions[["valuta"]], bottomStratumValueSample + topStratumValue)),
+                stratumpercentage = c("100%", paste0(round(bottomStratumValueSample / bottomStratumValuePopulation * 100, 2), "%"), paste0(round((bottomStratumValueSample + topStratumValue) / planningOptions[["populationValue"]] * 100, 2), "%")))
+    stratumTable$setData(row)
+  }
 }
 
 .auditSelectionSampleTable <- function(options,
                                        selectionState,
                                        selectionContainer,
                                        jaspResults,
-                                       positionInContainer){
+                                       positionInContainer,
+                                       planningOptions){
 
   if(!options[["displaySample"]]) 
     return()
@@ -2467,7 +2788,7 @@
     rankingVariable       <- .auditReadVariableFromOptions(options, varType = "ranking")
     additionalVariables   <- .auditReadVariableFromOptions(options, varType = "additional")
     columnNames           <- c("Row number", "Count", recordNumberVariable, monetaryVariable, rankingVariable, additionalVariables)
-    
+
     for(i in columnNames){
 
       sampleTable$addColumnInfo(name = i,     
@@ -2483,6 +2804,23 @@
     
     dat <- as.data.frame(selectionState)
     colnames(dat) <- columnNames
+
+    if(options[["stratificationTopAndBottom"]]){
+
+      sampleTable$addColumnInfo(name = "Stratum",     
+                                type = "string",
+                                title = "Stratum")
+
+      stratum <- rep(NA, length(dat))
+      interval <- round(planningOptions[["populationValue"]] / 
+                          sum(selectionState[["count"]]), 2)
+
+      stratum[which(selectionState[, .v(options[["monetaryVariable"]])] > interval)] <- "Top"
+      stratum[which(selectionState[, .v(options[["monetaryVariable"]])] <= interval)] <- "Bottom"
+      dat <- cbind(dat, stratum)
+      colnames(dat)[length(colnames(dat))] <- "Stratum"
+
+    }
 
     sampleTable$setData(dat)
   }
@@ -2652,8 +2990,8 @@
                           type = c(rep("Population", length(popData)), 
                                    rep("Sample", length(sampleData))))
   
-    xBreaks <- JASPgraphs::getPrettyAxisBreaks(popData, min.n = 4)
-    yBreaks <- JASPgraphs::getPrettyAxisBreaks(hist(popData, plot = FALSE, breaks = 50)$counts, min.n = 4)
+    xBreaks <- jaspGraphs::getPrettyAxisBreaks(popData, min.n = 4)
+    yBreaks <- jaspGraphs::getPrettyAxisBreaks(hist(popData, plot = FALSE, breaks = 50)$counts, min.n = 4)
 
     p <- ggplot2::ggplot(data = plotData, mapping = ggplot2::aes(x = x, fill = type)) +
             ggplot2::geom_histogram(bins = 50, col = "black", position = "identity") +
@@ -2662,7 +3000,7 @@
             ggplot2::scale_y_continuous(name = "Frequency", breaks = yBreaks, limits = c(min(yBreaks), max(yBreaks))) +
             ggplot2::scale_fill_manual(values = c("#0063B2FF", "#9CC3D5FF"))
 
-    p <- JASPgraphs::themeJasp(p, legend.position = "top")
+    p <- jaspGraphs::themeJasp(p, legend.position = "top")
 
     if(i == 1){
       plotHistograms[[variables[i]]] <- createJaspPlot(plot = p, title = "Book values", height = 300, width = 500)
@@ -2717,7 +3055,8 @@
                                   planningOptions,
                                   sample, 
                                   evaluationContainer,
-                                  type){
+                                  type, 
+                                  selectionState){
 
   if(options[["auditResult"]] == "")
     return()
@@ -2763,6 +3102,73 @@
       prior <- NULL
 
     } else if(type == "bayesian"){
+
+      if(options[["stratificationTopAndBottom"]]){
+
+        k <- length(which(sample[, .v(options[["monetaryVariable"]])] != sample[, .v(options[["auditResult"]])]))
+        diff <- (sample[, .v(options[["monetaryVariable"]])] - sample[, .v(options[["auditResult"]])])
+        taintings <- diff / sample[, .v(options[["monetaryVariable"]])]
+        totalTaint <- sum(taintings * selectionState[["count"]])
+        mle <- totalTaint / sum(selectionState[["count"]])
+
+        if(mle > diff)
+          mle <- diff
+
+        interval <- (planningOptions[["populationValue"]] / sum(selectionState[["count"]])) # Adjust      
+        topStratum <- sample[which(sample[, .v(options[["monetaryVariable"]])] > interval), ]
+        bottomStratum <- sample[which(sample[, .v(options[["monetaryVariable"]])] <= interval), ]
+        M_unseen <- planningOptions[["populationValue"]] - sum(sample[, .v(options[["monetaryVariable"]])])
+        m_seen_percentage <- (planningOptions[["populationValue"]] - M_unseen) / planningOptions[["populationValue"]]
+
+        overstatement_top <- sum(topStratum[, .v(options[["monetaryVariable"]])] - topStratum[, .v(options[["auditResult"]])]) 
+        overstatement_bottomseen <- sum(bottomStratum[, .v(options[["monetaryVariable"]])] - bottomStratum[, .v(options[["auditResult"]])])   # The observed overstatement in the bottom stratum
+        taints <- (bottomStratum[, .v(options[["monetaryVariable"]])] - bottomStratum[, .v(options[["auditResult"]])]) / bottomStratum[, .v(options[["monetaryVariable"]])]             # Add the taint of the sample to the data
+
+        beta0_unseen <- 1 + sum(taints)                                     # Beta posteror alpha parameter for unseen taint (prior = 1)
+        beta1_unseen <- 1 + nrow(bottomStratum) - sum(taints)                             # Beta posterior beta parameter for unseen taint (prior = 1)
+  
+        MLE_overstatement_unseen <- sum(taints) / nrow(bottomStratum) * M_unseen          # Estimate of the unseen MLE is the average taint (times the unseen value)
+
+        UB_overstatement_unseen <- qbeta(options[["confidence"]],                   # Upper bound for the unseen overstatement 
+                                        shape1 = beta0_unseen, 
+                                        shape2 = beta1_unseen) * M_unseen  
+
+        MLE_overstatement_total <- overstatement_top +                      # Add the seen and unseen most likely error for the MLE of the total
+                                    overstatement_bottomseen + 
+                                    MLE_overstatement_unseen
+
+        UB_overstatement_total <- overstatement_top +                       # The upper bound on the unseen overstatement is added for the upper bound on the total
+                                    overstatement_bottomseen + 
+                                    UB_overstatement_unseen                   
+
+        absoluteInaccuracy <- UB_overstatement_total - MLE_overstatement_total  # The inaccuracy is the difference between the upper bound and the mle
+        relativeInaccuracy <- absoluteInaccuracy / planningOptions[["populationValue"]]  # The relative inaccuracy is the proportional difference for the total value
+
+        # Step 6: And finally, the relative overstatement
+        UB_relativeOverstatement <- UB_overstatement_total / planningOptions[["populationValue"]]
+
+        mle1 <- MLE_overstatement_total / planningOptions[["populationValue"]]
+
+        precision <- UB_relativeOverstatement - mle
+
+        #obtainedInaccuracy <- options[["maximumUncertaintyPercentage"]] * (1 - m_seen_percentage)
+
+        result <- list(confBound = UB_relativeOverstatement,
+                       precision = relativeInaccuracy,
+                       k = k,
+                       t = totalTaint,
+                       n = sum(selectionState[["count"]]),
+                       conclusion = "Approve population",
+                       kPrior = 0,
+                       nPrior = 0,
+                       method = "stratification",
+                       mle = mle,
+                       materiality = planningOptions[["materiality"]])
+
+        evaluationContainer[["evaluationState"]] <- createJaspState(result)
+    
+        return(result)
+      }
 
       prior <- jfa::auditPrior(materiality = planningOptions[["materiality"]], 
                               confidence = planningOptions[["confidence"]],
@@ -2855,7 +3261,7 @@
     if(isTryError(result)){
 
       evaluationContainer$setError(paste0("An error occurred: ", 
-                                        JASP:::.extractErrorMessage(result)))
+                                        jaspBase:::.extractErrorMessage(result)))
       return()
     }
 
@@ -2890,15 +3296,15 @@
     if(options[["variableType"]] == "variableTypeCorrect" && !options[["useSumStats"]])
       ready <- options[["auditResult"]] != "" && 
                 options[["recordNumberVariable"]] != "" && 
-                planningOptions[["materiality"]] != 0
+                (planningOptions[["materiality"]] != 0 || options[["maximumUncertaintyPercentage"]] != 0)
     if(options[["variableType"]] == "variableTypeAuditValues" && !options[["useSumStats"]])
       ready <- options[["auditResult"]] != "" && 
                 options[["recordNumberVariable"]] != "" &&
                 options[["monetaryVariable"]] != "" && 
-                planningOptions[["materiality"]] != 0
+                (planningOptions[["materiality"]] != 0 || options[["maximumUncertaintyPercentage"]] != 0)
 
     if(options[["variableType"]] == "variableTypeCorrect" && options[["useSumStats"]])
-      ready <- options[["nSumStats"]] > 0 && planningOptions[["materiality"]] != 0
+      ready <- options[["nSumStats"]] > 0 && (planningOptions[["materiality"]] != 0 || options[["maximumUncertaintyPercentage"]] != 0)
 
     if(ready){
 
@@ -2939,7 +3345,7 @@
                                   " (",
                                   nrow(selectionState),
                                   " + ",
-                                  length(which(selectionState[["count"]] != 1)),
+                                  sum(selectionState[["count"]][which(selectionState[["count"]] != 1)] - 1),
                                   ")")
     } else {
       sampleSizeMessage <- planningState[["sampleSize"]]
@@ -2951,7 +3357,7 @@
       additionalMessage <- gettext("probability that the maximum misstatement is lower than")
     }
 
-    message <- gettextf("The selection consisted of <b>%1$s</b> observations, of which <b>%2$s</b> were found to contain an error. The knowledge from these data, combined with the risk assessments results in an <b>%3$s</b> upper confidence bound of <b>%4$s</b>. The cumulative knowledge states that there is a <b>%5$s</b> %6$s <b>%7$s</b>.",
+    message <- gettextf("The selection consisted of <b>%1$s</b> sampling units, of which <b>%2$s</b> were found to contain an error. The knowledge from these data, combined with the risk assessments results in an <b>%3$s</b> upper confidence bound of <b>%4$s</b>. The cumulative knowledge states that there is a <b>%5$s</b> %6$s <b>%7$s</b>.",
                         sampleSizeMessage,
                         errorLabel,
                         planningOptions[["confidenceLabel"]],
@@ -3019,7 +3425,8 @@
                                   confidence = evaluationOptions[["confidence"]], 
                                   expectedError = evaluationOptions[["expectedErrors"]], 
                                   N = evaluationOptions[["populationSize"]], 
-                                  prior = p)
+                                  prior = p,
+                                  increase = options[["sampleSizeIncrease"]])
 
     if(options[["useSumStats"]]){
       planningState[["sampleSize"]] <- options[["nSumStats"]]
@@ -3220,7 +3627,7 @@
     if(isTryError(result)){
 
       evaluationContainer$setError(paste0("An error occurred: ", 
-                                        JASP:::.extractErrorMessage(result)))
+                                        jaspBase:::.extractErrorMessage(result)))
       return()
     }
 
@@ -3275,7 +3682,9 @@
                                         "IR",
                                         "irCustom",
                                         "CR",
-                                        "crCustom"))
+                                        "crCustom",
+                                        "maximumUncertaintyStatistic",
+                                        "display"))
 
   evaluationTable$addColumnInfo(name = 'materiality',   
                                 title = gettext("Materiality"),
@@ -3292,7 +3701,7 @@
 
   if(options[["mostLikelyError"]])
     evaluationTable$addColumnInfo(name = 'mle',         
-                                  title = gettext("MLE"), 
+                                  title = gettext("Most likely error"), 
                                   type = 'string')
 
   if(type == "frequentist"){
@@ -3332,11 +3741,6 @@
                               title = boundTitle, 
                               type = 'string')
 
-    if(options[["monetaryVariable"]] != "")
-      evaluationTable$addColumnInfo(name = 'projm',         
-                                title = gettext("Maximum Misstatement"),           
-                                type = 'string')
-
   } else if(type == "bayesian"){
 
     if(options[["areaUnderPosterior"]] == "displayCredibleBound"){
@@ -3345,11 +3749,6 @@
       evaluationTable$addColumnInfo(name = 'bound',         
                               title = boundTitle, 
                               type = 'string')
-
-      if(options[["monetaryVariable"]] != "")
-        evaluationTable$addColumnInfo(name = 'projm',         
-                                  title = gettext("Maximum Misstatement"),           
-                                  type = 'string')
 
     } else if (options[["areaUnderPosterior"]] == "displayCredibleInterval"){
 
@@ -3361,22 +3760,15 @@
        evaluationTable$addColumnInfo(name = 'upperBound',  
                               title = gettext("Upper"),       
                               overtitle = boundTitle, 
-                              type = 'string')  
-
-      if(options[["monetaryVariable"]] != ""){
-
-        evaluationTable$addColumnInfo(name = 'lowerProjm',  
-                          title = gettext("Lower"),       
-                          overtitle = gettext("Maximum Misstatement"),           
-                          type = 'string') 
-        evaluationTable$addColumnInfo(name = 'upperProjm',  
-                                  title = gettext("Upper"),       
-                                  overtitle = gettext("Maximum Misstatement"),           
-                                  type = 'string')                           
-
-      }                                                       
+                              type = 'string')                                                         
     }
   }
+
+  if(options[["maximumUncertaintyStatistic"]])
+    evaluationTable$addColumnInfo(name = 'maximumUncertainty',         
+                                  title = gettext("Obtained precision"), 
+                                  type = 'string')
+
 
   if(type == "bayesian" && options[["evidenceRatio"]])
     evaluationTable$addColumnInfo(name = 'evidenceRatio',
@@ -3434,9 +3826,13 @@
     credibleInterval <- .auditCalculateCredibleInterval(evaluationState)
     lowerBound <- credibleInterval[["lowerBound"]]
     upperBound <- credibleInterval[["upperBound"]]
-
-    LowerBoundLabel <- paste0(round(lowerBound * 100, 3), "%")
-    UpperBoundLabel <- paste0(round(upperBound * 100, 3), "%")
+    
+    LowerBoundLabel <- base::switch(options[["display"]],
+                                    "displayPercentages" = paste0(round(lowerBound * 100, 3), "%"),
+                                    "displayValues" = paste(planningOptions[["valuta"]], round(lowerBound * planningOptions[["populationValue"]], 3)))
+    UpperBoundLabel <- base::switch(options[["display"]],
+                                    "displayPercentages" = paste0(round(upperBound * 100, 3), "%"),
+                                    "displayValues" = paste(planningOptions[["valuta"]], round(upperBound * planningOptions[["populationValue"]], 3)))
 
     row <- data.frame(materiality = planningOptions[["materialityLabel"]],
                       sampleSize = evaluationState[["n"]],
@@ -3447,7 +3843,9 @@
 
   } else {
 
-    boundLabel <- paste0(round(evaluationState[["confBound"]] * 100, 3), "%")
+    boundLabel <- base::switch(options[["display"]],
+                               "displayPercentages" = paste0(round(evaluationState[["confBound"]] * 100, 3), "%"),
+                               "displayValues" = paste(planningOptions[["valuta"]], round(evaluationState[["confBound"]] * planningOptions[["populationValue"]], 3)))
 
     row <- data.frame(materiality = planningOptions[["materialityLabel"]],
                       sampleSize = evaluationState[["n"]],
@@ -3459,94 +3857,12 @@
 
   if(options[["mostLikelyError"]]){
 
-    if(options[["variableType"]] == "variableTypeAuditValues" && 
-        options[["estimator"]] %in% c("directBound", "differenceBound", "ratioBound", "regressionBound")){
+    mle <- evaluationState[["mle"]]
+    mleLabel <- base::switch(options[["display"]],
+                             "displayPercentages" = paste0(round(mle * 100, 3), "%"),
+                             "displayValues" = paste(planningOptions[["valuta"]], round(mle * planningOptions[["populationValue"]], 3)))
 
-      mle <- (planningOptions[["populationValue"]] - evaluationState[["pointEstimate"]]) / 
-              planningOptions[["populationValue"]]
-    
-    } else {
-
-      if(type == "frequentist"){
-
-        mle <- evaluationState[["t"]] / evaluationState[["n"]]
-
-      } else if(type == "bayesian"){
-
-        if(evaluationState[["t"]] == 0 && evaluationState[["kPrior"]] == 0){
-
-          mle <- 0
-
-        } else {
-
-          if(evaluationState[["method"]] == "binomial")
-            mle <- (1 + evaluationState[["kPrior"]] + evaluationState[["t"]] - 1) /
-                    (1 + evaluationState[["kPrior"]] + evaluationState[["t"]] +
-                      1 + evaluationState[["nPrior"]] + evaluationState[["n"]] -
-                      evaluationState[["t"]] - 2)
-
-          if(evaluationState[["method"]] == "poisson")
-            mle <- (1 + evaluationState[["kPrior"]] + evaluationState[["t"]] - 1) / 
-                    (evaluationState[["nPrior"]] + evaluationState[["n"]])
-
-          if(evaluationState[["method"]] == "hypergeometric")
-            mle <- (1 + evaluationState[["kPrior"]] + evaluationState[["t"]] - 1) / 
-                    (1 + evaluationState[["kPrior"]] + evaluationState[["t"]] +
-                    1 + evaluationState[["nPrior"]] + evaluationState[["n"]] -
-                    evaluationState[["t"]] - 2)
-
-          if(evaluationState[["method"]] == "coxsnell")
-            mle <- evaluationState[["multiplicationFactor"]] * 
-                    ( (evaluationState[["df1"]] - 2)  / 
-                       evaluationState[["df1"]] 
-                    ) * 
-                    ( evaluationState[["df2"]] / 
-                      (evaluationState[["df2"]] + 2) 
-                    )
-
-        }
-      }
-    }
-
-    if(options[["materiality"]] == "materialityRelative"){
-
-      mleLabel <- paste0(round(mle * 100, 3), "%")
-
-    } else if(options[["materiality"]] == "materialityAbsolute"){
-
-      mleLabel <- paste(planningOptions[["valuta"]], 
-                          round(mle * planningOptions[["populationValue"]], 3))
-
-    }
-
-    row <- cbind(row, 
-                 mle = mleLabel)
-  }
-
-  if(options[["monetaryVariable"]] != ""){
-
-    if(type == "bayesian" && options[["areaUnderPosterior"]] == "displayCredibleInterval"){
-
-      lowerProjm <- round(lowerBound * 
-                          planningOptions[["populationValue"]], 2)
-      upperProjm <- round(upperBound * 
-                          planningOptions[["populationValue"]], 2) 
-      lowerProjmLabl <- paste(planningOptions[["valuta"]], lowerProjm)
-      upperProjmLabel <- paste(planningOptions[["valuta"]], upperProjm)
-
-      row <- cbind(row, 
-                  lowerProjm = lowerProjmLabl,
-                  upperProjm = upperProjmLabel) 
-
-    } else {
-
-      projm <- round(evaluationState[["confBound"]] * 
-                    planningOptions[["populationValue"]], 2)
-      projmLabel <- paste(planningOptions[["valuta"]], projm)
-      row <- cbind(row, 
-                  projm = projmLabel)
-
-    }
+    row <- cbind(row, mle = mleLabel)
   }
 
   if(type == "bayesian" && 
@@ -3566,11 +3882,73 @@
     }
 
   }
-  
-  evaluationTable$addRows(row)
 
-  if(options[["monetaryVariable"]] != "" && (planningOptions[["populationValue"]] == 0 || planningOptions[["populationValue"]] == 0.01))
-    evaluationTable$addFootnote(message = gettext("You must specify the population value to see the maximum misstatement."), symbol = "  \u26A0", colNames = 'projm')
+  if(options[["maximumUncertaintyStatistic"]]){
+    precisionLabel <- base::switch(options[["display"]],
+                                   "displayPercentages" = paste0(round(evaluationState[["precision"]] * 100, 3), "%"),
+                                   "displayValues" = paste(planningOptions[["valuta"]], round(evaluationState[["precision"]] * planningOptions[["populationValue"]], 3)))
+    row <- cbind(row, maximumUncertainty = precisionLabel)
+  }
+
+  evaluationTable$addRows(row)
+}
+
+.auditEvaluationAssumptionChecks <- function(options,
+                                             sample,
+                                             evaluationContainer,
+                                             jaspResults,
+                                             positionInContainer = 3){
+
+  if(!options[["evaluationAssumptionChecks"]]) 
+    return()
+
+  .updateTabNumber(jaspResults)
+
+  tableTitle <- gettextf("<b>Table %1$i.</b> Assumption Checks",
+                         jaspResults[["tabNumber"]]$object)
+  
+  assumptionTable <- createJaspTable(tableTitle)
+  assumptionTable$position  <- positionInContainer
+  assumptionTable$dependOn(options = c("evaluationAssumptionChecks"))
+
+  assumptionTable$addColumnInfo(name = 'type',   
+                                title = gettext(""),
+                                type = 'string')
+  assumptionTable$addColumnInfo(name = 'correlation', 
+                                title = gettext("Pearson's r"), 
+                                type = 'string')
+  assumptionTable$addColumnInfo(name = 'pvalue', 
+                                title = gettext("<i>p</i>"), 
+                                type = 'pvalue')
+   assumptionTable$addColumnInfo(name = 'bayesfactor', 
+                                title = gettextf("BF%1$s", "\u2081\u2080"), 
+                                type = 'string')  
+
+  assumptionTable$addFootnote(gettextf("<i>p</i> < .05 or %1$s > 19 implies that an assumption might be violated.", "BF\u2081\u2080"), symbol = gettext("<i>Note.</i>"))
+
+  evaluationContainer[["assumptionTable"]] <- assumptionTable
+
+  if(options[["auditResult"]] == ""){
+        row <- list(type = gettext("The sample taints are homogeneous"))
+    assumptionTable$addRows(row)
+    return()
+  }
+
+    bookValues <- sample[, .v(options[["monetaryVariable"]])]
+    auditValues <- sample[, .v(options[["auditResult"]])]
+    taints <- (bookValues - auditValues) / bookValues
+    
+    cor <- cor(bookValues, taints)
+    pval <- cor.test(bookValues, taints)$p.value # Frequentistisch
+    bf <- .audit_jzs_corbf(r = cor(bookValues, taints), n = nrow(sample)) # Bayesiaans
+    bf <- 1 / bf
+
+    row <- list(type = gettext("The sample taints are homogeneous"), 
+                correlation = round(cor, 3),
+                pvalue = pval,
+                bayesfactor = round(bf, 3))
+    assumptionTable$addRows(row)
+                             
 }
 
 .auditEvaluationInformationPlot <- function(options,
@@ -3668,12 +4046,12 @@
 
     fillUp <- rev(c("#1380A1", boundColor, "#1380A1"))
 
-    yBreaks <- JASPgraphs::getPrettyAxisBreaks(c(0, values), min.n = 4)
+    yBreaks <- jaspGraphs::getPrettyAxisBreaks(c(0, values), min.n = 4)
     
     if(options[["variableType"]] == "variableTypeAuditValues" && 
         options[["materiality"]] == "materialityAbsolute"){
 
-      x.labels <- format(JASPgraphs::getPrettyAxisBreaks(
+      x.labels <- format(jaspGraphs::getPrettyAxisBreaks(
                           seq(0, 1.1 * max(values), length.out = 100), 
                           min.n = 4), 
                         scientific = FALSE)
@@ -3682,7 +4060,7 @@
     } else {
 
       x.labels <- paste0(round(
-                      JASPgraphs::getPrettyAxisBreaks(seq(0, 1.1 * max(values), length.out = 100), 
+                      jaspGraphs::getPrettyAxisBreaks(seq(0, 1.1 * max(values), length.out = 100), 
                       min.n = 4) * 100, 4), 
                     "%")
       values.labels <- paste0(round(values * 100, 2), "%")
@@ -3694,14 +4072,14 @@
     plotData$x <- factor(plotData$x, levels = plotData$x)
 
     yLimits <- c(0, 1.1 * max(values))
-    yBreaks <- JASPgraphs::getPrettyAxisBreaks(seq(0, 1.1 * max(values), length.out = 100), 
+    yBreaks <- jaspGraphs::getPrettyAxisBreaks(seq(0, 1.1 * max(values), length.out = 100), 
                                             min.n = 4)
 
     if(mle < 0 || bound < 0){
       # Here we adjust the axes if the mle turns out to be negative
-      yBreaks <- JASPgraphs::getPrettyAxisBreaks(seq(min(values), 1.1 * max(values), length.out = 100), 
+      yBreaks <- jaspGraphs::getPrettyAxisBreaks(seq(min(values), 1.1 * max(values), length.out = 100), 
                                                 min.n = 4)
-      x.labels <- format(JASPgraphs::getPrettyAxisBreaks(seq(min(values), 1.1 * max(values), length.out = 100), 
+      x.labels <- format(jaspGraphs::getPrettyAxisBreaks(seq(min(values), 1.1 * max(values), length.out = 100), 
                           min.n = 4), scientific = FALSE)
       yLimits <- c(min(values), 1.1 * max(values))
     }
@@ -3731,7 +4109,7 @@
                               axis.text.y = ggplot2::element_text(hjust = 0),
                               panel.grid.major.x = ggplot2::element_line(color = "#cbcbcb", size = 0.5))
 
-    p <- JASPgraphs::themeJasp(p, 
+    p <- jaspGraphs::themeJasp(p, 
                                sides = "") + myTheme
 
     evaluationInformation$plotObject <- p
@@ -3849,13 +4227,15 @@
     cols[which(plotData$x != plotData$y)] <- rgb(0.9, 0, 0, 1)
 
     p <- ggplot2::ggplot(data = plotData, mapping = ggplot2::aes(x = x, y = y)) +
+          ggplot2::geom_line(data = data.frame(x = c(0, max(xticks)), y = c(0, max(yticks))), 
+                              mapping = ggplot2::aes(x = x, y = y), size = 0.35, linetype = "dashed") +
           ggplot2::scale_x_continuous(name = gettextf("Book values (%1$s)", planningOptions[["valuta"]]),
                                       breaks = xticks,
                                       labels = xLabs) +
         ggplot2::scale_y_continuous(name = gettextf("Audit values (%1$s)", planningOptions[["valuta"]]),
                             breaks = yticks,
                             labels = yLabs) + 
-        JASPgraphs::geom_point(size = 3, fill = cols)
+        jaspGraphs::geom_point(size = 3, fill = cols)
 
     p <- .auditCorrelationPlotAddLine(fit = fit[[bestModel]], 
                                       plot = p, 
@@ -3876,7 +4256,7 @@
     myTheme <- ggplot2::theme(panel.grid.major.x = ggplot2::element_line(color = "#cbcbcb", size = 0.5), 
                             panel.grid.major.y = ggplot2::element_line(color = "#cbcbcb", size = 0.5))
     
-    p <- JASPgraphs::themeJasp(p) + myTheme
+    p <- jaspGraphs::themeJasp(p) + myTheme
 
     correlationPlot$plotObject <- p
 
