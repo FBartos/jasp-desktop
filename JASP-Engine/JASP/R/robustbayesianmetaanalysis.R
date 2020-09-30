@@ -654,10 +654,7 @@ RobustBayesianMetaAnalysis <- function(jaspResults, dataset, options, state = NU
   for (i in seq_along(prior_elements)) {
     tmp <- NULL
     for (elem in options[[prior_elements[i]]]) {
-      tmp_prior <- tryCatch(.robmaOptions2Priors(elem), error = function(e)e)
-      if(class(tmp_prior) %in% c("simpleError", "error")){
-        JASP:::.quitAnalysis(tmp_prior$message)
-      }
+      tmp_prior <- .robmaOptions2Priors(elem)
       tmp <- c(tmp, list(tmp_prior))
     }
     object[[prior_names[i]]] <- tmp
@@ -903,12 +900,7 @@ RobustBayesianMetaAnalysis <- function(jaspResults, dataset, options, state = NU
   
   if (options[["measures"]] == "fitted") {
     
-    fit <- tryCatch({
-      fit <- readRDS(file = options[["fitted_path"]])
-      if (!RoBMA::is.RoBMA(fit))
-        JASP:::.quitAnalysis(gettext("The loaded object is not a RoBMA model."))
-      fit
-    },error = function(e)e)
+    fit <- readRDS(file = options[["fitted_path"]])
     
   } else{
     
@@ -916,7 +908,7 @@ RobustBayesianMetaAnalysis <- function(jaspResults, dataset, options, state = NU
       # extract priors
       priors <- jaspResults[["priors"]][["object"]]
       
-      fit <- tryCatch(RoBMA::RoBMA(
+      fit <- RoBMA::RoBMA(
         # data
         t   = if (options[["measures"]] == "cohensd" && options[["input_t"]] != "")                     dataset[, .v(options[["input_t"]])],
         d   = if (options[["measures"]] == "cohensd" && options[["input_ES"]] != "")                    dataset[, .v(options[["input_ES"]])],
@@ -964,11 +956,11 @@ RobustBayesianMetaAnalysis <- function(jaspResults, dataset, options, state = NU
         ),
         save    = "all",
         seed    = if (options[["setSeed"]]) options[["setSeed"]]
-      ),error = function(e)e)
+      )
       
     } else{
 
-      fit <- tryCatch(RoBMA::update.RoBMA(
+      fit <- RoBMA::update.RoBMA(
         object  = fit,
         study_names  = if (options[["input_labels"]] != "") dataset[, .v(options[["input_labels"]])],
         chains  = options[["advanced_chains"]],
@@ -991,7 +983,7 @@ RobustBayesianMetaAnalysis <- function(jaspResults, dataset, options, state = NU
           progress_tick   = 'progressbarTick()'
         ),
         refit_failed = options[["advanced_control"]] != "no_refit"
-      ),error = function(e)e)
+      )
       
     }
     
@@ -1473,8 +1465,7 @@ RobustBayesianMetaAnalysis <- function(jaspResults, dataset, options, state = NU
   
   
   # plot
-  p <- tryCatch(
-    RoBMA::plot.RoBMA(
+  p <- RoBMA::plot.RoBMA(
       fit,
       parameter = pars,
       type      = options[["plots_type"]],
@@ -1483,9 +1474,7 @@ RobustBayesianMetaAnalysis <- function(jaspResults, dataset, options, state = NU
       weights   = if (parameters == "omega") !options[["plots_omega_function"]] else  FALSE,
       order     = if (parameters == "theta") {if (options[["plots_theta_order"]] == "labels") NULL else options[["plots_theta_order"]]},
       rescale_x = if (parameters == "omega") options[["rescale_weightfunction"]] else  FALSE,
-    ),
-    error = function(e) e
-  )
+    )
   
   if (any(class(p) %in% "error")) {
     temp_plot <- createJaspPlot(title = title, width = width, height = height)
@@ -1620,16 +1609,13 @@ RobustBayesianMetaAnalysis <- function(jaspResults, dataset, options, state = NU
     plots_individual[[paste(parameters, collapse = "")]] <- temp_plots
     
     # nota that this creates a list of ggplot objects
-    p <- tryCatch(
-      RoBMA::plot.RoBMA(
+    p <- RoBMA::plot.RoBMA(
         fit,
         parameter = pars,
         type      = c("individual", if (options[["plots_type_individual_conditional"]]) "conditional"),
         plot_type = "ggplot",
         order     = c(options[["plots_type_individual_order"]], options[["plots_type_individual_by"]])
-      ),
-      error = function(e) e
-    )
+      )
     
     if (any(class(p) %in% "error")) {
       temp_plot <- createJaspPlot(title = title, width = width, height = height)
@@ -1656,17 +1642,14 @@ RobustBayesianMetaAnalysis <- function(jaspResults, dataset, options, state = NU
     temp_plot$dependOn(dependencies)
     plots_individual[[paste(parameters, collapse = "")]] <- temp_plot
     
-    p <- tryCatch(
-      RoBMA::plot.RoBMA(
+    p <- RoBMA::plot.RoBMA(
         fit,
         parameter = pars,
         type      = c("individual", if (options[["plots_type_individual_conditional"]]) "conditional"),
         plot_type = "ggplot",
         order     = c(options[["plots_type_individual_order"]], options[["plots_type_individual_by"]]
         )
-      ),
-      error = function(e)e
-    )
+      )
     
     if (any(class(p) %in% "error")) {
       temp_plot$setError(p[["message"]])
